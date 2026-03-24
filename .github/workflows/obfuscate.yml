@@ -1,0 +1,110 @@
+name: JavaScript 代码混淆
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      sourceFileName:
+        description: '需要混淆的源文件名称（如：_workers(明文).js）'
+        required: true
+        default: '_workers(明文).js'
+        type: string
+      outputFileName:
+        description: '混淆后生成的文件名称（如：_workers(混淆).js）'
+        required: true
+        default: '_workers(混淆).js'
+        type: string
+
+  push:
+    paths:
+      - '_workers(明文).js'
+
+jobs:
+  obfuscate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: 安装 javascript-obfuscator
+        run: npm install javascript-obfuscator
+
+      - name: 执行代码混淆
+        env:
+          SOURCE_FILE: ${{ github.event.inputs.sourceFileName || '_workers(明文).js' }}
+          OUTPUT_FILE: ${{ github.event.inputs.outputFileName || '_workers(混淆).js' }}
+        run: |
+          cat > obfuscate.js << 'EOF'
+          const fs = require('fs');
+          const JavaScriptObfuscator = require('javascript-obfuscator');
+
+          const sourceFile = process.env.SOURCE_FILE;
+          const outputFile = process.env.OUTPUT_FILE;
+
+          if (!fs.existsSync(sourceFile)) {
+              console.error(`错误：未找到源文件 ${sourceFile}`);
+              process.exit(1);
+          }
+
+          const code = fs.readFileSync(sourceFile, 'utf8');
+
+          if (!code.trim()) {
+              console.error('错误：源文件内容为空');
+              process.exit(1);
+          }
+
+          const obfuscationOptions = {
+              compact: true,
+              controlFlowFlattening: false,
+              deadCodeInjection: false,
+              debugProtection: false,
+              disableConsoleOutput: true,
+              identifierNamesGenerator: 'mangled-shuffled',
+              renameGlobals: false,
+              rotateStringArray: true,
+              shuffleStringArray: true,
+              splitStrings: true,
+              splitStringsChunkLength: 3,
+              stringArray: true,
+              stringArrayEncoding: ['base64'],
+              stringArrayThreshold: 1,
+              unicodeEscapeSequence: true
+          };
+
+          try {
+              const obfuscatedCode = JavaScriptObfuscator
+                  .obfuscate(code, obfuscationOptions)
+                  .getObfuscatedCode();
+
+              fs.writeFileSync(outputFile, obfuscatedCode, 'utf8');
+              console.log(`成功：混淆后的文件已保存为 ${outputFile}`);
+          } catch (err) {
+              console.error(`混淆失败：${err.message}`);
+              process.exit(1);
+          }
+          EOF
+
+          node obfuscate.js
+
+      - name: 提交混淆文件
+        env:
+          OUTPUT_FILE: ${{ github.event.inputs.outputFileName || '_workers(混淆).js' }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$OUTPUT_FILE"
+
+          if git diff --staged --quiet; then
+              echo "文件无变更，无需提交"
+          else
+              git commit -m "生成混淆文件 $OUTPUT_FILE"
+              git push
+          fi
